@@ -1,0 +1,17 @@
+# Chemin racine de ton projet
+path: C:/Users/hp/Desktop/PickAndGo
+train: train/images
+val: val/images
+
+# Nombre de produits et leurs noms
+nc: 8
+names: [
+  'Bouteille_Eau', 
+  'Cahier', 
+  'Stylo', 
+  'Gazelle', 
+  'Choco_Pain', 
+  'Bissap', 
+  'Riz', 
+  'Huile'
+]
