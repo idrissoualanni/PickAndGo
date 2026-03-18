@@ -3,16 +3,23 @@ import requests
 import json
 from ultralytics import YOLO
 
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
 # --- CONFIGURATION ---
-# Adresse IP de ton téléphone (Partage de connexion)
-IP_TELEPHONE = "10.192.45.125"
+IP_TELEPHONE = os.getenv("IP_TELEPHONE", "")
+if not IP_TELEPHONE:
+    raise ValueError(" L'IP_TELEPHONE n'est pas définie dans le fichier .env !")
 ADRESSE_FLUX = f"http://{IP_TELEPHONE}:8080/video"
 
-# Ton URL d'API Google Sheets
-API_URL = "https://script.google.com/macros/s/AKfycbwDC3AmaMN7AWPNi65yJI7VEUoQc3ET3USSKXx_aqJ7Q1z5TkGIkEBI_6sa4367C4DiNQ/exec"
+API_URL = os.getenv("URL_API", "")
+if not API_URL:
+    raise ValueError(" L'URL_API n'est pas définie dans le fichier .env !")
 
 # Chargement du modèle YOLO
-print("🔄 Chargement de l'IA...")
+print(" Chargement de l'IA...")
 model = YOLO("best.pt")
 
 # Variables de session
@@ -38,21 +45,21 @@ def envoyer_paiement_api(montant):
             if res_data.get("status") == "success":
                 return res_data.get("nouveau_solde")
             else:
-                print(f"⚠️ Erreur Cloud : {res_data.get('message')}")
+                print(f" Erreur Cloud : {res_data.get('message')}")
     except Exception as e:
-        print(f"❌ Erreur connexion API : {e}")
+        print(f" Erreur connexion API : {e}")
     return None
 
 # Connexion à la caméra du téléphone
-print(f"📡 Connexion au téléphone : {ADRESSE_FLUX}")
+print(f" Connexion au téléphone : {ADRESSE_FLUX}")
 cap = cv2.VideoCapture(ADRESSE_FLUX)
 
 if not cap.isOpened():
-    print("❌ Erreur : Impossible d'ouvrir le flux vidéo.")
+    print(" Erreur : Impossible d'ouvrir le flux vidéo.")
     print("Vérifie que l'IP est correcte et que IP Webcam est lancé.")
     exit()
 
-print("✅ Système démarré ! Appuyez sur 'q' pour quitter.")
+print(" Système démarré ! Appuyez sur 'q' pour quitter.")
 
 while True:
     ret, frame = cap.read()
@@ -68,7 +75,7 @@ while True:
         clss = results[0].boxes.cls.int().tolist()
 
         for box, id_obj, cls in zip(boxes, ids, clss):
-            nom_tech = model.names[cls]
+            nom_tech = str(model.names[cls]) # type: ignore
             
             if nom_tech in produits_info and id_obj not in objets_payes:
                 memoire_objets[id_obj] = nom_tech
@@ -89,18 +96,18 @@ while True:
     for id_p in objets_sortis:
         if id_p not in objets_payes:
             nom_p = memoire_objets[id_p]
-            prix_p = produits_info[nom_p]["prix"]
+            prix_p = int(produits_info[nom_p]["prix"]) # type: ignore
             
-            print(f"💰 Paiement détecté : {nom_p} ({prix_p} F)")
+            print(f" Paiement détecté : {nom_p} ({prix_p} F)")
             nouveau_solde = envoyer_paiement_api(prix_p)
             
             if nouveau_solde is not None:
                 solde_affiche = f"{nouveau_solde} F"
                 objets_payes.add(id_p)
-                print(f"✅ Nouveau solde Cloud : {solde_affiche}")
+                print(f" Nouveau solde Cloud : {solde_affiche}")
         
         # Nettoyage mémoire
-        del memoire_objets[id_p]
+        memoire_objets.pop(id_p, None)
 
     # 3. HUD (Interface)
     cv2.rectangle(frame, (0, 0), (350, 60), (255, 0, 0), -1)

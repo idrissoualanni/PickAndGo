@@ -1,0 +1,17 @@
+# Environnements virtuels
+venv/
+env/
+.venv/
+
+# Fichiers de configuration locaux
+.env
+
+# Fichiers compilés Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# PyTorch et autres gros fichiers de modèle si besoin (exclure si on veut pas les versionner, mais best.pt est souvent dans git lfs, ici je laisse best.pt)
+# *.pt
+explication.md
+walkthrough.md

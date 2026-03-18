@@ -3,9 +3,15 @@ import requests
 import json
 from ultralytics import YOLO
 
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
 # --- CONFIGURATION ---
-# Ton URL Google Apps Script est bien intégrée
-API_URL = "https://script.google.com/macros/s/AKfycbyzMP7Y0WDzWMtRq_aBr6AF4_vBLW-DOQ_oEYQv_Cyuc2Tf5GVicaamH-Ce-YeS399Y8g/exec"
+API_URL = os.getenv("URL_API", "")
+if not API_URL:
+    raise ValueError(" L'URL_API n'est pas définie dans le fichier .env !")
 
 model = YOLO("best.pt")
 
@@ -32,11 +38,11 @@ def envoyer_paiement_api(montant):
             if res_data.get("status") == "success":
                 return res_data.get("nouveau_solde")
             else:
-                print(f"⚠️ Refus API : {res_data.get('message')}")
+                print(f" Refus API : {res_data.get('message')}")
         else:
-            print(f"❌ Erreur Serveur : {response.status_code}")
+            print(f" Erreur Serveur : {response.status_code}")
     except Exception as e:
-        print(f"❌ Erreur de connexion : {e}")
+        print(f" Erreur de connexion : {e}")
     return None
 
 cap = cv2.VideoCapture(0)
@@ -56,7 +62,7 @@ while True:
         clss = results[0].boxes.cls.int().tolist()
 
         for box, id_objet, classe in zip(boxes, ids, clss):
-            nom_tech = model.names[classe]
+            nom_tech = str(model.names[classe]) # type: ignore
             
             if nom_tech in produits_info and id_objet not in objets_payes:
                 memoire_objets[id_objet] = nom_tech
@@ -76,18 +82,18 @@ while True:
     for id_parti in objets_partis:
         if id_parti not in objets_payes:
             nom_tech = memoire_objets[id_parti]
-            prix = produits_info[nom_tech]["prix"]
+            prix = int(produits_info[nom_tech]["prix"]) # type: ignore
             
-            print(f"📡 Facturation ID {id_parti} : {prix} FCFA...")
+            print(f" Facturation ID {id_parti} : {prix} FCFA...")
             nouveau_solde = envoyer_paiement_api(prix)
             
             if nouveau_solde is not None:
                 solde_local = nouveau_solde
                 objets_payes.add(id_parti) # Ne plus jamais facturer cet ID
-                print(f"✅ Payé ! Nouveau solde : {solde_local} F")
+                print(f" Payé ! Nouveau solde : {solde_local} F")
         
         # Supprimer de la mémoire temporaire
-        del memoire_objets[id_parti]
+        memoire_objets.pop(id_parti, None)
 
     # 3. Interface (HUD)
     cv2.rectangle(frame, (0, 0), (350, 60), (255, 0, 0), -1)

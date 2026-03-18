@@ -38,7 +38,7 @@ while True:
             boxes = r.boxes.xyxy.int().tolist()
 
             for id_objet, classe, box in zip(ids, cls, boxes):
-                nom_tech = model.names[classe]
+                nom_tech = str(model.names[classe]) # type: ignore
                 
                 if nom_tech in produits_info:
                     # On enregistre l'objet seulement s'il n'a jamais été payé
@@ -64,19 +64,19 @@ while True:
             nom_tech_parti = memoire_objets[id_parti]
             info_produit = produits_info[nom_tech_parti]
             
-            prix = info_produit["prix"]
-            nom_reel = info_produit["nom"]
+            prix = int(info_produit["prix"]) # type: ignore
+            nom_reel = str(info_produit["nom"])
             
             if solde_client >= prix:
                 solde_client -= prix
                 panier_total += prix
                 objets_payes.add(id_parti) # MARQUER COMME PAYÉ DEFINITIVEMENT
-                print(f"💰 PAIEMENT VALIDÉ : {nom_reel} (ID {id_parti}) -> -{prix} FCFA")
+                print(f" PAIEMENT VALIDÉ : {nom_reel} (ID {id_parti}) -> -{prix} FCFA")
             else:
-                print(f"⚠️ SOLDE INSUFFISANT pour la {nom_reel}")
+                print(f" SOLDE INSUFFISANT pour la {nom_reel}")
         
         # On nettoie la mémoire temporaire
-        del memoire_objets[id_parti]
+        memoire_objets.pop(id_parti, None)
 
     # --- INTERFACE VISUELLE (HUD) ---
     cv2.rectangle(frame, (0, 0), (640, 60), (200, 0, 0), -1)
