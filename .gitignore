@@ -13,5 +13,12 @@ __pycache__/
 
 # PyTorch et autres gros fichiers de modèle si besoin (exclure si on veut pas les versionner, mais best.pt est souvent dans git lfs, ici je laisse best.pt)
 # *.pt
+
 explication.md
 walkthrough.md
+
+# Configuration de l'éditeur
+.vscode/
+
+# Dossier d'artefacts locaux de l'assistant IA
+.gemini/
