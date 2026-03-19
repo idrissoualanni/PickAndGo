@@ -12,6 +12,7 @@ load_dotenv()
 API_URL = os.getenv("URL_API", "")
 if not API_URL:
     raise ValueError(" L'URL_API n'est pas définie dans le fichier .env !")
+USER_ID = "Client_5"
 
 model = YOLO("best.pt")
 
@@ -29,7 +30,7 @@ produits_info = {
 def envoyer_paiement_api(montant):
     """ Envoie les données à Google Sheets avec gestion des redirections """
     try:
-        payload = {"montant": montant}
+        payload = {"userID": USER_ID, "montant": montant, "action": "achat"}
         # allow_redirects=True est obligatoire pour Google Apps Script
         response = requests.post(API_URL, json=payload, timeout=10, allow_redirects=True)
         

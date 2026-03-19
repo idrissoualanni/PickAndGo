@@ -17,6 +17,7 @@ ADRESSE_FLUX = f"http://{IP_TELEPHONE}:8080/video"
 API_URL = os.getenv("URL_API", "")
 if not API_URL:
     raise ValueError(" L'URL_API n'est pas définie dans le fichier .env !")
+USER_ID = "Client_5"
 
 # Chargement du modèle YOLO
 print(" Chargement de l'IA...")
@@ -37,7 +38,7 @@ produits_info = {
 def envoyer_paiement_api(montant):
     """ Envoie le débit à Google Sheets """
     try:
-        payload = {"montant": montant}
+        payload = {"userID": USER_ID, "montant": montant, "action": "achat"}
         # allow_redirects est obligatoire pour Google
         response = requests.post(API_URL, json=payload, timeout=10, allow_redirects=True)
         if response.status_code == 200:

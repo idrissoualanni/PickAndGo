@@ -1,12 +1,22 @@
 import cv2
+import requests
+import os
+from dotenv import load_dotenv
 from ultralytics import YOLO
+
+load_dotenv()
 
 # 1. Charger ton modèle
 model = YOLO("best.pt")
 
 # 2. Configuration du compte et mémoire
-solde_client = 5000 
+URL_API = os.getenv("URL_API", "")
+if not URL_API:
+    raise ValueError(" L'URL_API n'est pas définie dans le fichier .env !")
+USER_ID = "Client_5"
+
 panier_total = 0
+solde_affiche = "---"
 memoire_objets = {}  # Stocke {id: nom_technique} pendant qu'ils sont à l'écran
 objets_payes = set()  # Liste des IDs déjà facturés pour éviter les doubles paiements
 
@@ -67,20 +77,30 @@ while True:
             prix = int(info_produit["prix"]) # type: ignore
             nom_reel = str(info_produit["nom"])
             
-            if solde_client >= prix:
-                solde_client -= prix
-                panier_total += prix
-                objets_payes.add(id_parti) # MARQUER COMME PAYÉ DEFINITIVEMENT
-                print(f" PAIEMENT VALIDÉ : {nom_reel} (ID {id_parti}) -> -{prix} FCFA")
-            else:
-                print(f" SOLDE INSUFFISANT pour la {nom_reel}")
+            print(f" Facturation ID {id_parti} : {nom_reel} ({prix} F)...")
+            try:
+                payload = {"userID": USER_ID, "produit": nom_reel, "montant": prix, "action": "achat"}
+                res = requests.post(URL_API, json=payload, timeout=10, allow_redirects=True)
+                if res.status_code == 200:
+                    data = res.json()
+                    if data.get("status") == "success":
+                        solde_affiche = f"{data.get('nouveau_solde')} F"
+                        panier_total += prix
+                        objets_payes.add(id_parti)
+                        print(f" PAIEMENT VALIDÉ : {nom_reel} -> Nouveau solde: {solde_affiche}")
+                    else:
+                        print(f" REFUS API : {data.get('message')}")
+                else:
+                    print(f" ERREUR SERVEUR : {res.status_code}")
+            except Exception as e:
+                print(f" ERREUR CONNEXION : {e}")
         
         # On nettoie la mémoire temporaire
         memoire_objets.pop(id_parti, None)
 
     # --- INTERFACE VISUELLE (HUD) ---
     cv2.rectangle(frame, (0, 0), (640, 60), (200, 0, 0), -1)
-    affichage = f"SOLDE: {solde_client} F | TOTAL PANIER: {panier_total} F"
+    affichage = f"SOLDE: {solde_affiche} | PANIER: {panier_total} F"
     cv2.putText(frame, affichage, (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
     
     cv2.imshow("PICK & GO - SYSTEME BOUTEILLE", frame)

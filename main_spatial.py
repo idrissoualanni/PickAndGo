@@ -67,7 +67,7 @@ class SmartStore:
                 center = ((x1 + x2) // 2, (y1 + y2) // 2)
                 current_clients[id_p] = center
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 120, 0), 2)
-                self.draw_label(frame, f"CLIENT {id_p}", (x1, y1), (255, 120, 0))
+                self.draw_label(frame, f"{USER_ID}", (x1, y1), (255, 120, 0))
 
         # 2. Tracking Produits
         res_prod = self.model_prod.track(frame, persist=True, conf=self.CONF_THRESHOLD, imgsz=self.IMG_SIZE_AI, verbose=False, tracker="botsort.yaml")[0]
@@ -114,7 +114,7 @@ class SmartStore:
                                     min_dist, best_client = dist, cid
                         
                         if best_client and min_dist < self.PROXIMITY_LIMIT:
-                            print(f" [ID:{id_o}] {name} -> CLIENT {best_client} (OK: {int(min_dist)}px)")
+                            print(f" [ID:{id_o}] {name} -> {USER_ID} (Prox: {int(min_dist)}px)")
                             self.send_payment(name, price, USER_ID)
                             self.paid_ids.add(id_o)
                             self.recent_purchases.append({"name": name, "price": price, "time": time.time()})
@@ -132,17 +132,27 @@ class SmartStore:
         return frame
 
     def _post_payment(self, item, amount, uid):
-        try: self.session.post(URL_API, json={"userID": uid, "produit": item, "montant": amount, "action": "achat"}, timeout=3)
-        except: pass
+        print(f" Tentative d'envoi Cloud... ({item})")
+        try:
+            # allow_redirects=True est CRUCIAL pour Google Apps Script
+            response = self.session.post(URL_API, json={"userID": uid, "produit": item, "montant": amount, "action": "achat"}, timeout=15, allow_redirects=True)
+            if response.status_code == 200:
+                print(f" Cloud : Achat de {item} enregistré ! (Solde: {response.json().get('nouveau_solde')} F)")
+            else:
+                print(f" Erreur Cloud (Code {response.status_code}) : {response.text}")
+        except Exception as e:
+            print(f" Erreur Connexion Cloud : {e}")
 
     def send_payment(self, item, amount, uid):
-        # Utiliser un thread pour ne pas bloquer la vidéo pendant la requête HTTP (évite les lags)
-        threading.Thread(target=self._post_payment, args=(item, amount, uid)).start()
+        # Pour le test, on le fait de manière synchrone pour être SÛR que c'est envoyé
+        # même si la caméra plante juste après.
+        self._post_payment(item, amount, uid)
 
 class CameraFeed:
     def __init__(self, stream_url):
         self.stream_url = stream_url
-        self.cap = cv2.VideoCapture(self.stream_url)
+        # Ajout de cv2.CAP_FFMPEG pour forcer le backend plus robuste sur Windows
+        self.cap = cv2.VideoCapture(self.stream_url, cv2.CAP_FFMPEG)
         self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         self.ret, self.frame = self.cap.read()
         self.running = True

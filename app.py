@@ -95,16 +95,34 @@ def wallet_section():
             df = pd.DataFrame(r.json())
             df.columns = [c.strip().lower() for c in df.columns]
             
+            if df.empty:
+                st.info("Aucune donnée disponible dans la base.")
+                return
+
+            if 'utilisateur' not in df.columns:
+                st.error("Format de base de données invalide (colonne 'Utilisateur' manquante).")
+                return
+
             user_data = df[df['utilisateur'].astype(str).str.lower() == USER_ID.lower()]
             
             if not user_data.empty:
-                dernier_solde = user_data.iloc[-1]['nouveau solde']
-                with col_stats1:
-                    st.metric("Solde Disponible", f"{int(dernier_solde)} FCFA", delta_color="normal")
+                # Vérification de la présence de la colonne de solde
+                solde_col = 'nouveau solde' if 'nouveau solde' in df.columns else None
+                
+                if solde_col and not user_data[solde_col].empty:
+                    dernier_solde = user_data.iloc[-1][solde_col]
+                    with col_stats1:
+                        st.metric("Solde Disponible", f"{int(dernier_solde)} FCFA", delta_color="normal")
+                else:
+                    with col_stats1:
+                        st.metric("Solde Disponible", "--- FCFA")
                 
                 with col_stats2:
-                    nb_achats = len(user_data[user_data['action'] == 'achat'])
-                    st.metric("Total Achats", f"{nb_achats} articles")
+                    if 'action' in df.columns:
+                        nb_achats = len(user_data[user_data['action'] == 'achat'])
+                        st.metric("Total Achats", f"{nb_achats} articles")
+                    else:
+                        st.metric("Total Achats", "---")
                 
                 st.subheader("🧾 Historique Récent")
                 # Affichage des transactions
