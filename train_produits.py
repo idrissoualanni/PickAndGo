@@ -1,17 +1,46 @@
+"""
+Entraînement du modèle YOLOv8 pour Pick & Go.
+
+Workflow complet :
+    1. python scripts/collect_images.py   # télécharge les images
+    2. python scripts/auto_label.py       # crée les annotations YOLO
+    3. python train_produits.py           # entraîne le modèle
+
+Le modèle final est sauvegardé dans models/pick_and_go/weights/best.pt
+"""
+
+from pathlib import Path
 from ultralytics import YOLO
-import os
 
-if __name__ == '__main__':
-    # 1. Charger le modèle de base (YOLOv8 Nano)
-    model = YOLO("yolov8n.pt") 
+ROOT      = Path(__file__).parent
+DATA_YAML = ROOT / "data.yaml"
+MODELS    = ROOT / "models"
 
-    # 2. Lancer l'apprentissage sur tes données
-    # epochs=50 : l'IA va réviser 50 fois tes images
-    model.train(
-        data="data.yaml", 
-        epochs=50, 
-        imgsz=640, 
-        batch=16, 
-        name="pick_and_go_sn"
+
+def train(epochs: int = 50, batch: int = 16, imgsz: int = 640):
+    print("🚀 Démarrage de l'entraînement Pick & Go...\n")
+
+    model = YOLO("yolov8n.pt")
+
+    results = model.train(
+        data=str(DATA_YAML),
+        epochs=epochs,
+        imgsz=imgsz,
+        batch=batch,
+        project=str(MODELS),
+        name="pick_and_go",
+        exist_ok=True,
+        verbose=True,
     )
-    print("Entraînement terminé ! Ton modèle est dans : runs/detect/pick_and_go_sn/weights/best.pt")
+
+    best = MODELS / "pick_and_go" / "weights" / "best.pt"
+    if best.exists():
+        print(f"\n✅ Modèle prêt : {best}")
+    else:
+        print("\n⚠️  Modèle introuvable, vérifiez les logs ci-dessus.")
+
+    return results
+
+
+if __name__ == "__main__":
+    train()
