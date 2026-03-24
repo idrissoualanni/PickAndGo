@@ -42,7 +42,7 @@ def split_and_label():
     for class_id, class_name in enumerate(class_names):
         class_dir = raw_dir / class_name
         if not class_dir.exists():
-            print(f"⚠️  Dossier absent: {class_dir} — ignoré.")
+            print(f"[WARN] Dossier absent: {class_dir} - ignore.")
             continue
 
         images = [f for f in class_dir.iterdir() if f.suffix.lower() in VALID_EXTENSIONS]
@@ -61,9 +61,9 @@ def split_and_label():
         n_train, n_val = split, len(images) - split
         total_train += n_train
         total_val   += n_val
-        print(f"  ✓ {class_name:20s} → {n_train} train | {n_val} val")
+        print(f"  [OK] {class_name:20s} -> {n_train} train | {n_val} val")
 
-    print(f"\n✅ Dataset prêt : {total_train} train | {total_val} val")
+    print(f"\n[DONE] Dataset pret : {total_train} train | {total_val} val")
 
 
 if __name__ == "__main__":

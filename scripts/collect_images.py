@@ -31,7 +31,7 @@ SEARCH_QUERIES = {
 
 def collect():
     raw_dir = ROOT / "data" / "raw"
-    print(f"📂 Dossier de collecte : {raw_dir}\n")
+    print(f"[INFO] Dossier de collecte : {raw_dir}\n")
 
     for class_name in PRODUCTS:
         save_dir = raw_dir / class_name
@@ -39,11 +39,11 @@ def collect():
 
         existing = list(save_dir.glob("*.*"))
         if len(existing) >= IMAGES_PER_CLASS:
-            print(f"  ✓ {class_name}: déjà {len(existing)} images, ignoré.")
+            print(f"  [OK] {class_name}: deja {len(existing)} images, ignore.")
             continue
 
         query = SEARCH_QUERIES[class_name]
-        print(f"🔍 [{class_name}] Recherche: \"{query}\"")
+        print(f"[DL] [{class_name}] Recherche: \"{query}\"")
 
         crawler = BingImageCrawler(
             feeder_threads=2,
@@ -54,9 +54,9 @@ def collect():
         crawler.crawl(keyword=query, max_num=IMAGES_PER_CLASS, min_size=(100, 100))
 
         downloaded = list(save_dir.glob("*.*"))
-        print(f"  → {len(downloaded)} images téléchargées pour {class_name}\n")
+        print(f"  -> {len(downloaded)} images telechargees pour {class_name}\n")
 
-    print("✅ Collecte terminée !")
+    print("[DONE] Collecte terminee !")
 
 
 if __name__ == "__main__":
