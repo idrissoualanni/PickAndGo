@@ -17,8 +17,8 @@ DATA_YAML = ROOT / "data.yaml"
 MODELS    = ROOT / "models"
 
 
-def train(epochs: int = 50, batch: int = 16, imgsz: int = 640):
-    print("🚀 Démarrage de l'entraînement Pick & Go...\n")
+def train(epochs: int = 50, batch: int = 4, imgsz: int = 320):
+    print("Demarrage de l'entrainement Pick & Go...\n")
 
     model = YOLO("yolov8n.pt")
 
@@ -27,6 +27,8 @@ def train(epochs: int = 50, batch: int = 16, imgsz: int = 640):
         epochs=epochs,
         imgsz=imgsz,
         batch=batch,
+        workers=0,   # evite les crashes memoire sur CPU
+        amp=False,   # desactive AMP (instable sur CPU)
         project=str(MODELS),
         name="pick_and_go",
         exist_ok=True,

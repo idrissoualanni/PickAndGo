@@ -22,3 +22,14 @@ walkthrough.md
 
 # Dossier d'artefacts locaux de l'assistant IA
 .gemini/
+
+# Images du dataset (trop lourd pour git)
+data/raw/
+data/train/
+data/val/
+
+# Modeles entraines
+models/
+
+# Fichiers de cache YOLO
+*.cache
