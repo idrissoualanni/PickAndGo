@@ -10,14 +10,14 @@ Usage:
 import cv2
 import requests
 import os
-import time
 import argparse
 from pathlib import Path
-from collections import defaultdict
+from collections import defaultdict, Counter
 from dotenv import load_dotenv
 from ultralytics import YOLO
 
-from config import PRODUCTS, CONF_THRESHOLD, WARMUP_FRAMES, DISAPPEAR_FRAMES
+from config import (PRODUCTS, CONF_THRESHOLD, WARMUP_FRAMES, DISAPPEAR_FRAMES,
+                    IMG_SIZE_AI, CAM_WIDTH, CAM_HEIGHT, VOTE_RATIO)
 
 load_dotenv()
 
@@ -47,7 +47,7 @@ class PickAndGoDetector:
         print(f"Classes: {list(self.model.names.values())}")
 
         # Etat du tracking
-        self.frame_count     = defaultdict(int)   # {id: nb frames vu}
+        self.votes           = defaultdict(list)  # {id: [class, class, ...]} historique des votes
         self.disappear_count = defaultdict(int)   # {id: nb frames absent}
         self.confirmed       = {}                 # {id: class_name} objets confirmes
         self.paid_ids        = set()              # IDs deja factures
@@ -57,8 +57,14 @@ class PickAndGoDetector:
 
     def process_frame(self, frame):
         """Detecte, traque et facture les produits dans une frame."""
-        results = self.model.track(frame, persist=True, conf=CONF_THRESHOLD, verbose=False)
+        # Redimensionner pour inference rapide
+        small = cv2.resize(frame, (IMG_SIZE_AI, IMG_SIZE_AI))
+        results = self.model.track(small, persist=True,
+                                   conf=CONF_THRESHOLD, imgsz=IMG_SIZE_AI,
+                                   verbose=False)
         visible_ids = set()
+        sx = frame.shape[1] / IMG_SIZE_AI  # facteur echelle X
+        sy = frame.shape[0] / IMG_SIZE_AI  # facteur echelle Y
 
         for r in results:
             if r.boxes is None or r.boxes.id is None:
@@ -66,9 +72,8 @@ class PickAndGoDetector:
             for box, cls_tensor, track_id_tensor in zip(
                 r.boxes.xyxy, r.boxes.cls, r.boxes.id
             ):
-                track_id  = int(track_id_tensor)
-                class_id  = int(cls_tensor)
-                class_name = self.model.names[class_id]
+                track_id   = int(track_id_tensor)
+                class_name = self.model.names[int(cls_tensor)]
 
                 if class_name not in PRODUCTS:
                     continue
@@ -76,30 +81,42 @@ class PickAndGoDetector:
                 visible_ids.add(track_id)
                 self.disappear_count[track_id] = 0
 
-                # Warmup : confirmer apres N frames consecutives
                 if track_id not in self.paid_ids:
-                    self.frame_count[track_id] += 1
-                    if self.frame_count[track_id] >= WARMUP_FRAMES:
-                        self.confirmed[track_id] = class_name
+                    # Systeme de vote : enregistre la classe detectee
+                    self.votes[track_id].append(class_name)
+                    votes = self.votes[track_id]
 
-                # Dessiner la boite
-                x1, y1, x2, y2 = map(int, box)
-                info   = PRODUCTS[class_name]
-                label  = f"{info['nom']} — {info['prix']} FCFA"
-                color  = COLOR_PAID if track_id in self.paid_ids else COLOR_BOX
+                    # Verifier la coherence apres WARMUP_FRAMES frames
+                    if len(votes) >= WARMUP_FRAMES:
+                        top_class, top_count = Counter(votes).most_common(1)[0]
+                        if top_count / len(votes) >= VOTE_RATIO:
+                            self.confirmed[track_id] = top_class
+                        else:
+                            # Trop de confusion → reset
+                            self.votes[track_id] = []
 
+                # Remettre a l'echelle pour affichage
+                x1 = int(box[0] * sx); y1 = int(box[1] * sy)
+                x2 = int(box[2] * sx); y2 = int(box[3] * sy)
+
+                display_class = self.confirmed.get(track_id, class_name)
+                info  = PRODUCTS.get(display_class, PRODUCTS[class_name])
+                color = COLOR_PAID if track_id in self.paid_ids else COLOR_BOX
+
+                # Label avec confiance
+                label = f"{info['nom']} — {info['prix']} FCFA"
                 cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-                cv2.putText(frame, label, (x1, y1 - 8),
+                cv2.putText(frame, label, (x1, max(y1 - 8, 12)),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2)
 
-                # Barre de warmup
+                # Barre de progression warmup
                 if track_id not in self.paid_ids:
-                    pct   = min(self.frame_count[track_id] / WARMUP_FRAMES, 1.0)
+                    pct   = min(len(self.votes[track_id]) / WARMUP_FRAMES, 1.0)
                     bar_w = int((x2 - x1) * pct)
-                    cv2.rectangle(frame, (x1, y2 + 4), (x1 + bar_w, y2 + 10),
-                                  (0, 255, 200), -1)
+                    bar_color = (0, 255, 200) if track_id in self.confirmed else (0, 165, 255)
+                    cv2.rectangle(frame, (x1, y2 + 4), (x1 + bar_w, y2 + 10), bar_color, -1)
 
-        # Detecter les objets qui ont disparu
+        # Facturer les objets disparus
         for track_id in list(self.confirmed.keys()):
             if track_id not in visible_ids:
                 self.disappear_count[track_id] += 1
@@ -156,6 +173,11 @@ class PickAndGoDetector:
             print(f"Impossible d'ouvrir la camera {camera_index}")
             return
 
+        # Forcer resolution basse pour plus de fluidite
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH,  CAM_WIDTH)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAM_HEIGHT)
+        cap.set(cv2.CAP_PROP_FPS, 30)
+        print(f"Camera {camera_index} — {CAM_WIDTH}x{CAM_HEIGHT}")
         print("PICK & GO actif — appuie sur [Q] pour quitter")
         while True:
             ret, frame = cap.read()
