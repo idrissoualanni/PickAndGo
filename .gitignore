@@ -33,3 +33,8 @@ models/
 
 # Fichiers de cache YOLO
 *.cache
+# Dossier Claude AI
+.claude/
+
+# Resultats de tests (images annotees)
+test_results/
