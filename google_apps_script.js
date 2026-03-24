@@ -1,108 +1,138 @@
+// Pick & Go — Google Apps Script
+// Deployer : Application Web | Executer en tant que : Moi | Acces : Toute personne
+// Copier l URL deploye et la mettre dans .env -> URL_API
+
+var SHEET_TRANSACTIONS = "Transactions";
+var SHEET_UTILISATEURS = "Utilisateurs";
+var SOLDE_INITIAL      = 5000; // FCFA offerts a la creation du compte
+
+// ─────────────────────────────────────────────
+// POST : achat ou recharge
+// ─────────────────────────────────────────────
 function doPost(e) {
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Transactions");
-  var userSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Utilisateurs");
-  
-  if (!sheet) {
-    sheet = SpreadsheetApp.getActiveSpreadsheet().insertSheet("Transactions");
-    sheet.appendRow(["Date", "Utilisateur", "Produit", "Montant", "Action", "Nouveau Solde"]);
-  }
-  
-  if (!userSheet) {
-    userSheet = SpreadsheetApp.getActiveSpreadsheet().insertSheet("Utilisateurs");
-    userSheet.appendRow(["Utilisateur", "Solde"]);
-    userSheet.appendRow(["Client_5", 5000]); // Exemple par défaut
-  }
+  try {
+    var data    = JSON.parse(e.postData.contents);
+    var userID  = (data.userID  || "").toString().trim();
+    var montant = parseFloat(data.montant) || 0;
+    var action  = (data.action  || "achat").toString().toLowerCase();
+    var produit = (data.produit || "N/A").toString();
 
-  var data = JSON.parse(e.postData.contents);
-  var userID = data.userID || "Client_Inconnu";
-  var montant = parseFloat(data.montant) || 0;
-  var action = data.action || "achat"; // 'achat' ou 'recharge'
-  var produit = data.produit || "N/A";
+    if (!userID) return jsonResponse({status:"error", message:"userID manquant"});
 
-  // 1. Trouver l'utilisateur et son solde actuel
-  var userRows = userSheet.getDataRange().getValues();
-  var userRowIndex = -1;
-  var soldeActuel = 0;
+    var ss        = SpreadsheetApp.getActiveSpreadsheet();
+    var userSheet = getOrCreateSheet(ss, SHEET_UTILISATEURS, ["Utilisateur","Solde"]);
+    var txSheet   = getOrCreateSheet(ss, SHEET_TRANSACTIONS,
+                      ["Date","Utilisateur","Produit","Montant","Action","Nouveau Solde"]);
 
-  for (var i = 1; i < userRows.length; i++) {
-    if (userRows[i][0] == userID) {
-      userRowIndex = i + 1;
-      soldeActuel = userRows[i][1];
-      break;
-    }
-  }
+    var userInfo     = getUser(userSheet, userID);
+    var solde        = userInfo.solde;
+    var rowIndex     = userInfo.rowIndex;
+    var nouveauSolde = solde;
 
-  // Si l'utilisateur n'existe pas, on le crée
-  if (userRowIndex == -1) {
-    userSheet.appendRow([userID, 5000]); // Offre de bienvenue de 5000 FCFA
-    userRowIndex = userSheet.getLastRow();
-    soldeActuel = 5000;
-  }
-
-  // 2. Calculer le nouveau solde
-  var nouveauSolde = soldeActuel;
-  if (action == "achat") {
-    if (soldeActuel >= montant) {
-      nouveauSolde = soldeActuel - montant;
+    if (action === "achat") {
+      if (solde < montant) {
+        return jsonResponse({status:"error", message:"Solde insuffisant ("+solde+" FCFA)"});
+      }
+      nouveauSolde = solde - montant;
+    } else if (action === "recharge") {
+      nouveauSolde = solde + montant;
     } else {
-      return ContentService.createTextOutput(JSON.stringify({"status": "error", "message": "Solde insuffisant"}))
-             .setMimeType(ContentService.MimeType.JSON);
+      return jsonResponse({status:"error", message:"Action inconnue: "+action});
     }
-  } else if (action == "recharge") {
-    nouveauSolde = soldeActuel + montant;
+
+    userSheet.getRange(rowIndex, 2).setValue(nouveauSolde);
+    var dateStr = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm:ss");
+    txSheet.appendRow([dateStr, userID, produit, montant, action, nouveauSolde]);
+
+    return jsonResponse({
+      status:        "success",
+      nouveau_solde: nouveauSolde,
+      message:       action === "achat" ? produit+" achete" : "Recharge de "+montant+" FCFA"
+    });
+
+  } catch(err) {
+    return jsonResponse({status:"error", message:"Erreur serveur: "+err.toString()});
   }
-
-  // 3. Mettre à jour les feuilles
-  userSheet.getRange(userRowIndex, 2).setValue(nouveauSolde);
-  sheet.appendRow([new Date(), userID, produit, montant, action, nouveauSolde]);
-
-  return ContentService.createTextOutput(JSON.stringify({
-    "status": "success", 
-    "nouveau_solde": nouveauSolde
-  })).setMimeType(ContentService.MimeType.JSON);
 }
 
+// ─────────────────────────────────────────────
+// GET : historique des transactions
+// ─────────────────────────────────────────────
 function doGet(e) {
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Transactions");
-  if (!sheet) return ContentService.createTextOutput("[]").setMimeType(ContentService.MimeType.JSON);
-  
-  var data = sheet.getDataRange().getValues();
-  var headers = data[0];
-  var json = [];
+  try {
+    var ss    = SpreadsheetApp.getActiveSpreadsheet();
+    var sheet = ss.getSheetByName(SHEET_TRANSACTIONS);
 
-  for (var i = 1; i < data.length; i++) {
-    var obj = {};
-    for (var j = 0; j < headers.length; j++) {
-      obj[headers[j]] = data[i][j];
+    if (!sheet || sheet.getLastRow() < 2) {
+      return ContentService.createTextOutput("[]").setMimeType(ContentService.MimeType.JSON);
     }
-    json.push(obj);
-  }
 
-  return ContentService.createTextOutput(JSON.stringify(json))
-         .setMimeType(ContentService.MimeType.JSON);
+    var data    = sheet.getDataRange().getValues();
+    var headers = data[0];
+    var rows    = [];
+
+    for (var i = 1; i < data.length; i++) {
+      var obj = {};
+      for (var j = 0; j < headers.length; j++) {
+        var val = data[i][j];
+        if (val instanceof Date) {
+          val = Utilities.formatDate(val, Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm:ss");
+        }
+        obj[headers[j]] = val;
+      }
+      rows.push(obj);
+    }
+
+    return ContentService
+      .createTextOutput(JSON.stringify(rows))
+      .setMimeType(ContentService.MimeType.JSON);
+
+  } catch(err) {
+    return jsonResponse({status:"error", message:err.toString()});
+  }
 }
 
-function initialiserSheet() {
+// ─────────────────────────────────────────────
+// Utilitaires internes
+// ─────────────────────────────────────────────
+function jsonResponse(obj) {
+  return ContentService
+    .createTextOutput(JSON.stringify(obj))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+function getOrCreateSheet(ss, name, headers) {
+  var sheet = ss.getSheetByName(name);
+  if (!sheet) { sheet = ss.insertSheet(name); sheet.appendRow(headers); }
+  return sheet;
+}
+
+function getUser(userSheet, userID) {
+  var rows = userSheet.getDataRange().getValues();
+  for (var i = 1; i < rows.length; i++) {
+    if (rows[i][0].toString().toLowerCase() === userID.toLowerCase()) {
+      return { solde: parseFloat(rows[i][1]) || 0, rowIndex: i + 1 };
+    }
+  }
+  // Creer le compte avec solde de bienvenue
+  userSheet.appendRow([userID, SOLDE_INITIAL]);
+  return { solde: SOLDE_INITIAL, rowIndex: userSheet.getLastRow() };
+}
+
+// ─────────────────────────────────────────────
+// Initialisation manuelle (lancer une seule fois)
+// ─────────────────────────────────────────────
+function initialiserSheets() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
-  
-  // 1. Initialiser la feuille Transactions
-  var sheet = ss.getSheetByName("Transactions");
-  if (sheet) {
-    sheet.clear();
-  } else {
-    sheet = ss.insertSheet("Transactions");
-  }
-  sheet.appendRow(["Date", "Utilisateur", "Produit", "Montant", "Action", "Nouveau Solde"]);
-  
-  // 2. Initialiser la feuille Utilisateurs
-  var userSheet = ss.getSheetByName("Utilisateurs");
-  if (userSheet) {
-    userSheet.clear();
-  } else {
-    userSheet = ss.insertSheet("Utilisateurs");
-  }
-  userSheet.appendRow(["Utilisateur", "Solde"]);
-  userSheet.appendRow(["Client_5", 5000]); // Compte de test
-  
-  Logger.log("Initialisation terminée ! Les feuilles Transactions et Utilisateurs ont été créées.");
+
+  var tx = ss.getSheetByName(SHEET_TRANSACTIONS);
+  if (tx) tx.clear(); else tx = ss.insertSheet(SHEET_TRANSACTIONS);
+  tx.appendRow(["Date","Utilisateur","Produit","Montant","Action","Nouveau Solde"]);
+
+  var users = ss.getSheetByName(SHEET_UTILISATEURS);
+  if (users) users.clear(); else users = ss.insertSheet(SHEET_UTILISATEURS);
+  users.appendRow(["Utilisateur","Solde"]);
+  users.appendRow(["Client_5", SOLDE_INITIAL]);
+
+  Logger.log("OK — Client_5 initialise avec "+SOLDE_INITIAL+" FCFA");
 }
