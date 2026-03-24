@@ -19,6 +19,8 @@ CONF_THRESHOLD   = 0.60   # plus haut = moins de faux positifs
 WARMUP_FRAMES    = 12     # nb frames avant confirmation
 DISAPPEAR_FRAMES = 15     # nb frames absent avant facturation
 IMG_SIZE_AI      = 320    # taille inference (320 = rapide, 640 = precis)
-CAM_WIDTH        = 640    # resolution webcam
-CAM_HEIGHT       = 480
+CAM_WIDTH        = 960    # resolution webcam
+CAM_HEIGHT       = 540
 VOTE_RATIO       = 0.75   # 75% des frames doivent voter pour la meme classe
+PROXIMITY_LIMIT  = 180    # distance max personne-produit pour declencher paiement
+SKIP_FRAMES      = 2      # inférence 1 frame sur N (fluidite)
