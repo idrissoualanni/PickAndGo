@@ -23,4 +23,5 @@ CAM_WIDTH        = 960    # resolution webcam
 CAM_HEIGHT       = 540
 VOTE_RATIO       = 0.75   # 75% des frames doivent voter pour la meme classe
 PROXIMITY_LIMIT  = 180    # distance max personne-produit pour declencher paiement
-SKIP_FRAMES      = 2      # inférence 1 frame sur N (fluidite)
+SKIP_FRAMES      = 3      # inference produit 1 frame sur N
+PERSON_SKIP      = 8      # inference personne 1 frame sur N (bouge moins vite)

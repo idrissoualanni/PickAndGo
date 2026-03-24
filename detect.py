@@ -22,7 +22,7 @@ import requests
 
 from config import (PRODUCTS, CONF_THRESHOLD, WARMUP_FRAMES, DISAPPEAR_FRAMES,
                     IMG_SIZE_AI, CAM_WIDTH, CAM_HEIGHT, VOTE_RATIO,
-                    PROXIMITY_LIMIT, SKIP_FRAMES)
+                    PROXIMITY_LIMIT, SKIP_FRAMES, PERSON_SKIP)
 
 load_dotenv()
 
@@ -104,21 +104,24 @@ class PickAndGoDetector:
         self.session = requests.Session()
 
         # Etat tracking produits
-        self.votes           = defaultdict(list)  # {id: [classe, ...]}
-        self.confirmed       = {}                 # {id: classe confirmee}
-        self.prod_positions  = {}                 # {id: (cx, cy)}
+        self.votes           = defaultdict(list)
+        self.confirmed       = {}
+        self.prod_positions  = {}
         self.disappear_count = defaultdict(int)
         self.paid_ids        = set()
-
-        # Etat tracking personnes
-        self.clients         = {}                 # {id: (cx, cy)}
-
-        # Paiements recents pour affichage
+        self.clients         = {}
         self.recent_purchases = []
-
         self.panier_total  = 0
         self.solde_affiche = "---"
         self._frame_idx    = 0
+
+        # Thread inference : overlay mis a jour en arriere-plan
+        self._overlay_lock   = threading.Lock()
+        self._overlay_draws  = []   # liste de fonctions lambda draw(frame)
+        self._infer_frame    = None
+        self._infer_ready    = threading.Event()
+        self._infer_running  = True
+        threading.Thread(target=self._inference_loop, daemon=True).start()
 
     # ── Dessin ────────────────────────────────
 
@@ -164,33 +167,41 @@ class PickAndGoDetector:
 
         threading.Thread(target=_post, daemon=True).start()
 
-    # ── Traitement d'une frame ─────────────────
+    # ── Thread inference (tourne en arriere-plan) ─
 
-    def process_frame(self, frame):
-        self._frame_idx += 1
-        run_inference = (self._frame_idx % SKIP_FRAMES == 0)
+    def _inference_loop(self):
+        """Boucle d'inference separee : ne bloque jamais l'affichage."""
+        while self._infer_running:
+            self._infer_ready.wait(timeout=0.1)
+            self._infer_ready.clear()
+            frame = self._infer_frame
+            if frame is None:
+                continue
 
-        if run_inference:
             small = cv2.resize(frame, (IMG_SIZE_AI, IMG_SIZE_AI))
             sx    = frame.shape[1] / IMG_SIZE_AI
             sy    = frame.shape[0] / IMG_SIZE_AI
+            draws = []
 
-            # ── Detection personnes ──
-            self.clients = {}
-            res_p = self.model_pers.track(
-                small, persist=True, classes=[0], conf=0.4,
-                imgsz=IMG_SIZE_AI, verbose=False
-            )[0]
-            if res_p.boxes is not None and res_p.boxes.id is not None:
-                for box, pid in zip(res_p.boxes.xyxy, res_p.boxes.id):
-                    x1 = int(box[0]*sx); y1 = int(box[1]*sy)
-                    x2 = int(box[2]*sx); y2 = int(box[3]*sy)
-                    cx, cy = (x1+x2)//2, (y1+y2)//2
-                    self.clients[int(pid)] = (cx, cy)
-                    cv2.rectangle(frame, (x1, y1), (x2, y2), C_PERSON, 2)
-                    self._label(frame, USER_ID, (x1, y1), C_PERSON)
+            # -- Personnes (moins souvent) --
+            if self._frame_idx % PERSON_SKIP == 0:
+                self.clients = {}
+                res_p = self.model_pers.track(
+                    small, persist=True, classes=[0], conf=0.4,
+                    imgsz=IMG_SIZE_AI, verbose=False
+                )[0]
+                if res_p.boxes is not None and res_p.boxes.id is not None:
+                    for box, pid in zip(res_p.boxes.xyxy, res_p.boxes.id):
+                        x1=int(box[0]*sx); y1=int(box[1]*sy)
+                        x2=int(box[2]*sx); y2=int(box[3]*sy)
+                        cx, cy = (x1+x2)//2, (y1+y2)//2
+                        self.clients[int(pid)] = (cx, cy)
+                        bx1,by1,bx2,by2 = x1,y1,x2,y2
+                        draws.append(lambda f, a=bx1,b=by1,c=bx2,d=by2:
+                            (cv2.rectangle(f,(a,b),(c,d),C_PERSON,2),
+                             self._label(f,USER_ID,(a,b),C_PERSON)))
 
-            # ── Detection produits ──
+            # -- Produits --
             visible_ids = set()
             res_pr = self.model_prod.track(
                 small, persist=True, conf=CONF_THRESHOLD,
@@ -199,8 +210,8 @@ class PickAndGoDetector:
 
             if res_pr.boxes is not None and res_pr.boxes.id is not None:
                 for box, cls_t, tid_t in zip(res_pr.boxes.xyxy,
-                                             res_pr.boxes.cls,
-                                             res_pr.boxes.id):
+                                              res_pr.boxes.cls,
+                                              res_pr.boxes.id):
                     oid        = int(tid_t)
                     class_name = self.model_prod.names[int(cls_t)]
                     if class_name not in PRODUCTS or oid in self.paid_ids:
@@ -208,69 +219,80 @@ class PickAndGoDetector:
 
                     visible_ids.add(oid)
                     self.disappear_count[oid] = 0
-
-                    x1 = int(box[0]*sx); y1 = int(box[1]*sy)
-                    x2 = int(box[2]*sx); y2 = int(box[3]*sy)
-                    cx, cy = (x1+x2)//2, (y1+y2)//2
+                    x1=int(box[0]*sx); y1=int(box[1]*sy)
+                    x2=int(box[2]*sx); y2=int(box[3]*sy)
+                    cx,cy = (x1+x2)//2,(y1+y2)//2
                     self.prod_positions[oid] = (cx, cy)
 
                     # Vote majoritaire
                     self.votes[oid].append(class_name)
-                    votes = self.votes[oid]
-                    if len(votes) >= WARMUP_FRAMES:
-                        top_cls, top_n = Counter(votes).most_common(1)[0]
-                        if top_n / len(votes) >= VOTE_RATIO:
+                    v = self.votes[oid]
+                    if len(v) >= WARMUP_FRAMES:
+                        top_cls, top_n = Counter(v).most_common(1)[0]
+                        if top_n / len(v) >= VOTE_RATIO:
                             self.confirmed[oid] = top_cls
                         else:
-                            self.votes[oid] = []  # reset si confusion
+                            self.votes[oid] = []
 
-                    # Dessin boite
-                    color = C_CONFIRM if oid in self.confirmed else C_PRODUCT
-                    cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
                     disp_cls = self.confirmed.get(oid, class_name)
                     info     = PRODUCTS[disp_cls]
-                    self._label(frame, f"{info['nom']} {info['prix']}F", (x1, y1), color)
+                    color    = C_CONFIRM if oid in self.confirmed else C_PRODUCT
+                    pct      = min(len(self.votes[oid]) / WARMUP_FRAMES, 1.0)
+                    bar_c    = (0,200,100) if oid in self.confirmed else (0,140,255)
+                    lines    = [(cx,cy,cp) for cp in self.clients.values()
+                                if math.dist((cx,cy),cp) < PROXIMITY_LIMIT]
 
-                    # Barre de progression
-                    pct   = min(len(votes) / WARMUP_FRAMES, 1.0)
-                    bar_w = int((x2 - x1) * pct)
-                    bar_c = (0, 200, 100) if oid in self.confirmed else (0, 140, 255)
-                    cv2.rectangle(frame, (x1, y2+4), (x1+bar_w, y2+10), bar_c, -1)
+                    bx1,by1,bx2,by2 = x1,y1,x2,y2
+                    lbl = f"{info['nom']} {info['prix']}F"
+                    draws.append(lambda f,
+                        a=bx1,b=by1,c=bx2,d=by2,
+                        col=color,l=lbl,p=pct,bc=bar_c,ln=lines: (
+                        cv2.rectangle(f,(a,b),(c,d),col,2),
+                        self._label(f,l,(a,b),col),
+                        cv2.rectangle(f,(a,d+4),(a+int((c-a)*p),d+10),bc,-1),
+                        [cv2.line(f,(px,py),cp,(0,255,255),1) for px,py,cp in ln]
+                    ))
 
-                    # Ligne personne ↔ produit si proche
-                    for cpos in self.clients.values():
-                        dist = math.dist((cx, cy), cpos)
-                        if dist < PROXIMITY_LIMIT:
-                            cv2.line(frame, (cx, cy), cpos, (0, 255, 255), 1)
-
-            # ── Facturation si produit disparu + personne proche ──
+            # -- Facturation --
             for oid in list(self.confirmed.keys()):
                 if oid in visible_ids:
                     continue
                 self.disappear_count[oid] += 1
                 if self.disappear_count[oid] >= DISAPPEAR_FRAMES and oid not in self.paid_ids:
                     last_pos = self.prod_positions.get(oid)
-                    # Verifier proximite
-                    proche = False
-                    if last_pos and self.clients:
-                        dist_min = min(math.dist(last_pos, cp) for cp in self.clients.values())
-                        proche = dist_min < PROXIMITY_LIMIT
-                    else:
-                        proche = True  # si pas de detection personne, facturer quand meme
-
+                    proche = (not self.clients or not last_pos or
+                              min(math.dist(last_pos,cp) for cp in self.clients.values()) < PROXIMITY_LIMIT)
                     if proche:
                         self._facturer(self.confirmed[oid], last_pos)
                         self.paid_ids.add(oid)
                     del self.confirmed[oid]
                     self.votes.pop(oid, None)
 
-        # ── Achats recents (3 secondes) ──
+            with self._overlay_lock:
+                self._overlay_draws = draws
+
+    # ── process_frame : affichage pur, pas d'inference ──
+
+    def process_frame(self, frame):
+        self._frame_idx += 1
+
+        # Envoyer la frame au thread inference
+        if self._frame_idx % SKIP_FRAMES == 0:
+            self._infer_frame = frame.copy()
+            self._infer_ready.set()
+
+        # Appliquer le dernier overlay calcule
+        with self._overlay_lock:
+            draws = list(self._overlay_draws)
+        for fn in draws:
+            fn(frame)
+
+        # Achats recents
         now = time.time()
-        self.recent_purchases = [p for p in self.recent_purchases if now - p["t"] < 3]
+        self.recent_purchases = [p for p in self.recent_purchases if now-p["t"] < 3]
         for i, p in enumerate(self.recent_purchases):
             cv2.putText(frame, f"VALIDE : {p['nom']}  {p['prix']} FCFA",
-                        (20, 75 + i * 32),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 80), 2)
+                        (20, 75+i*32), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0,255,80), 2)
 
         self._draw_hud(frame)
         return frame
@@ -297,12 +319,13 @@ class PickAndGoDetector:
         while True:
             ret, frame = cam.read()
             if not ret or frame is None:
-                time.sleep(0.02)
+                time.sleep(0.01)
                 continue
             cv2.imshow("Pick & Go", self.process_frame(frame))
             if cv2.waitKey(1) & 0xFF == ord("q"):
                 break
 
+        self._infer_running = False
         cam.release()
         cv2.destroyAllWindows()
         print(f"\nSession terminee — Panier total: {self.panier_total} FCFA")
